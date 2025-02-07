@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-API_TOKEN = os.getenv("API_TOKEN")
+API_TOKEN = os.getenv("TELEGRAM_BOT")
 if not API_TOKEN:
     raise ValueError("No API_TOKEN set for Telegram Bot.")
 

@@ -1,104 +1,123 @@
 from aiogram import Bot, Dispatcher, types
-from aiogram.dispatcher import FSMContext
-from aiogram.dispatcher.filters.state import State, StatesGroup
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.enums import ParseMode
+from aiogram.filters import Command, StateFilter
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.client.bot import DefaultBotProperties
 from config import API_TOKEN, logger
 
-bot = Bot(token=API_TOKEN, parse_mode=types.ParseMode.HTML)
-dp = Dispatcher(bot, storage=MemoryStorage())
+bot = Bot(
+    token=API_TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
+storage = MemoryStorage()
+dp = Dispatcher(storage=storage)
 
 
 class PresentationForm(StatesGroup):
-    waiting_for_style_command = State()
-    waiting_for_style_input = State()
-    waiting_for_query_command = State()
-    waiting_for_query_input = State()
+    waiting_for_style_command = State()  # Выбор: "Введи стиль" или "Вернуться назад"
+    waiting_for_style_input = State()  # Ожидание ввода стиля
+    waiting_for_query_command = State()  # Выбор: "Введи запрос" или "Вернуться назад"
+    waiting_for_query_input = State()  # Ожидание ввода запроса
 
 
-def get_main_menu_keyboard():
-    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    keyboard.add("Создать презентацию")
-    return keyboard
+def get_main_menu_keyboard() -> types.ReplyKeyboardMarkup:
+    return types.ReplyKeyboardMarkup(
+        keyboard=[
+            [types.KeyboardButton(text="Создать презентацию")]
+        ],
+        resize_keyboard=True
+    )
 
 
-def get_style_keyboard():
-    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    keyboard.add("Введи стиль", "Вернуться назад")
-    return keyboard
+def get_style_keyboard() -> types.ReplyKeyboardMarkup:
+    return types.ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                types.KeyboardButton(text="Введи стиль"),
+                types.KeyboardButton(text="Вернуться назад")
+            ]
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )
 
 
-def get_query_keyboard():
-    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    keyboard.add("Введи запрос", "Вернуться назад")
-    return keyboard
+def get_query_keyboard() -> types.ReplyKeyboardMarkup:
+    return types.ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                types.KeyboardButton(text="Введи запрос"),
+                types.KeyboardButton(text="Вернуться назад")
+            ]
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )
 
 
-@dp.message_handler(commands=['start'])
+@dp.message(Command("start"))
 async def start_handler(message: types.Message):
     response = "Привет! Добро пожаловать в бота для генерации презентаций.\nВыберите действие:"
-    logger.info(f"Запуск /start от пользователя {message.from_user.id}")
-    await message.reply(response, reply_markup=get_main_menu_keyboard())
+    logger.info(f"/start от пользователя {message.from_user.id} ({message.from_user.username})")
+    await message.answer(response, reply_markup=get_main_menu_keyboard())
 
 
-@dp.message_handler(lambda message: message.text == "Создать презентацию", state="*")
+@dp.message(lambda message: message.text == "Создать презентацию")
 async def create_presentation_handler(message: types.Message, state: FSMContext):
-    logger.info(f"Пользователь {message.from_user.id} выбрал 'Создать презентацию'")
-    await PresentationForm.waiting_for_style_command.set()
-    await message.reply("Выберите опцию:", reply_markup=get_style_keyboard())
+    logger.info(f"Пользователь {message.from_user.id} ({message.from_user.username}) выбрал 'Создать презентацию'")
+    await state.set_state(PresentationForm.waiting_for_style_command)
+    await message.answer("Выберите опцию:", reply_markup=get_style_keyboard())
 
 
-@dp.message_handler(state=PresentationForm.waiting_for_style_command)
+@dp.message(StateFilter(PresentationForm.waiting_for_style_command))
 async def style_command_handler(message: types.Message, state: FSMContext):
     if message.text == "Вернуться назад":
-        logger.info(f"Пользователь {message.from_user.id} вернулся в главное меню (стиль)")
-        await state.finish()
-        await message.reply("Вы вернулись в главное меню.", reply_markup=get_main_menu_keyboard())
+        logger.info(f"Пользователь {message.from_user.id} ({message.from_user.username}) вернулся в главное меню (стиль)")
+        await state.clear()
+        await message.answer("Вы вернулись в главное меню.", reply_markup=get_main_menu_keyboard())
     elif message.text == "Введи стиль":
-        logger.info(f"Пользователь {message.from_user.id} выбрал ввод стиля")
-
-        await message.reply("Пожалуйста, введите стиль:", reply_markup=types.ForceReply())
-        await PresentationForm.waiting_for_style_input.set()
+        logger.info(f"Пользователь {message.from_user.id} ({message.from_user.username}) выбрал ввод стиля")
+        await message.answer("Пожалуйста, введите стиль:", reply_markup=types.ForceReply())
+        await state.set_state(PresentationForm.waiting_for_style_input)
     else:
-        await message.reply("Пожалуйста, выберите одну из опций.", reply_markup=get_style_keyboard())
+        await message.answer("Пожалуйста, выберите одну из опций.", reply_markup=get_style_keyboard())
 
 
-@dp.message_handler(state=PresentationForm.waiting_for_style_input)
+@dp.message(StateFilter(PresentationForm.waiting_for_style_input))
 async def style_input_handler(message: types.Message, state: FSMContext):
-    logger.info(f"Пользователь {message.from_user.id} ввёл стиль: {message.text}")
-
+    logger.info(f"Пользователь {message.from_user.id} ({message.from_user.username}) ввёл стиль: {message.text}")
     await state.update_data(style=message.text)
-    await message.reply("Стиль сохранён.\nТеперь выберите действие:", reply_markup=get_query_keyboard())
-    await PresentationForm.waiting_for_query_command.set()
+    await message.answer("Стиль сохранён.\nТеперь выберите действие:", reply_markup=get_query_keyboard())
+    await state.set_state(PresentationForm.waiting_for_query_command)
 
 
-@dp.message_handler(state=PresentationForm.waiting_for_query_command)
+@dp.message(StateFilter(PresentationForm.waiting_for_query_command))
 async def query_command_handler(message: types.Message, state: FSMContext):
     if message.text == "Вернуться назад":
-        logger.info(f"Пользователь {message.from_user.id} вернулся в главное меню (запрос)")
-        await state.finish()
-        await message.reply("Вы вернулись в главное меню.", reply_markup=get_main_menu_keyboard())
+        logger.info(f"Пользователь {message.from_user.id} ({message.from_user.username}) вернулся в главное меню (запрос)")
+        await state.clear()
+        await message.answer("Вы вернулись в главное меню.", reply_markup=get_main_menu_keyboard())
     elif message.text == "Введи запрос":
-        logger.info(f"Пользователь {message.from_user.id} выбрал ввод запроса")
-
-        await message.reply("Пожалуйста, введите запрос:", reply_markup=types.ForceReply())
-        await PresentationForm.waiting_for_query_input.set()
+        logger.info(f"Пользователь {message.from_user.id} ({message.from_user.username}) выбрал ввод запроса")
+        await message.answer("Пожалуйста, введите запрос:", reply_markup=types.ForceReply())
+        await state.set_state(PresentationForm.waiting_for_query_input)
     else:
-        await message.reply("Пожалуйста, выберите одну из опций.", reply_markup=get_query_keyboard())
+        await message.answer("Пожалуйста, выберите одну из опций.", reply_markup=get_query_keyboard())
 
 
-@dp.message_handler(state=PresentationForm.waiting_for_query_input)
+@dp.message(StateFilter(PresentationForm.waiting_for_query_input))
 async def query_input_handler(message: types.Message, state: FSMContext):
-    logger.info(f"Пользователь {message.from_user.id} ввёл запрос: {message.text}")
-
+    logger.info(f"Пользователь {message.from_user.id} ({message.from_user.username}) ввёл запрос: {message.text}")
     await state.update_data(query=message.text)
     data = await state.get_data()
     style = data.get("style", "не указан")
     query = data.get("query", message.text)
 
-    await message.reply(f"Отправка запроса на сервер...\nСтиль: {style}\nЗапрос: {query}")
+    await message.answer(f"Отправка запроса на сервер...\nСтиль: {style}\nЗапрос: {query}")
 
-    # TODO json
+    # TODO: добавить логику связи с сервером и обработки результата
 
-    await state.finish()
-
-    await message.reply("Готово. Вы вернулись в главное меню.", reply_markup=get_main_menu_keyboard())
+    await state.clear()
+    await message.answer("Готово. Вы вернулись в главное меню.", reply_markup=get_main_menu_keyboard())

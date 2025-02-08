@@ -1,5 +1,5 @@
-import asyncio
 from telegram_bot import dp, bot
+import asyncio
 
 
 async def main():

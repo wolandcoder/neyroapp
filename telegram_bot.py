@@ -1,3 +1,5 @@
+import asyncio
+import aiohttp
 from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
 from aiogram.filters import Command, StateFilter
@@ -6,6 +8,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.bot import DefaultBotProperties
 from config import API_TOKEN, logger
+
 
 bot = Bot(
     token=API_TOKEN,
@@ -16,10 +19,10 @@ dp = Dispatcher(storage=storage)
 
 
 class PresentationForm(StatesGroup):
-    waiting_for_style_command = State()  # Выбор: "Введи стиль" или "Вернуться назад"
-    waiting_for_style_input = State()  # Ожидание ввода стиля
-    waiting_for_query_command = State()  # Выбор: "Введи запрос" или "Вернуться назад"
-    waiting_for_query_input = State()  # Ожидание ввода запроса
+    waiting_for_style_command = State()     # Выбор: "Введи стиль" или "Вернуться назад"
+    waiting_for_style_input = State()       # Ожидание ввода стиля
+    waiting_for_query_command = State()     # Выбор: "Введи запрос" или "Вернуться назад"
+    waiting_for_query_input = State()       # Ожидание ввода запроса
 
 
 def get_main_menu_keyboard() -> types.ReplyKeyboardMarkup:
@@ -107,6 +110,50 @@ async def query_command_handler(message: types.Message, state: FSMContext):
         await message.answer("Пожалуйста, выберите одну из опций.", reply_markup=get_query_keyboard())
 
 
+class PresentationGenerator:
+    def __init__(self):
+        self.api_url = "http://localhost:8000"
+
+    async def create_presentation(self, request: dict) -> str:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(f"{self.api_url}/v1/generate", json=request) as response:
+                if response.status != 200:
+                    error_data = await response.text()
+                    raise Exception(f"Ошибка API: {error_data}")
+                data = await response.json()
+                return data["presentation_id"]
+
+    async def check_status(self, presentation_id: str) -> dict:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"{self.api_url}/v1/status/{presentation_id}") as response:
+                if response.status != 200:
+                    error_data = await response.text()
+                    raise Exception(f"Ошибка проверки статуса: {error_data}")
+                return await response.json()
+
+    async def get_presentation(self, presentation_id: str) -> dict:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"{self.api_url}/v1/presentation/{presentation_id}") as response:
+                if response.status != 200:
+                    error_data = await response.text()
+                    raise Exception(f"Ошибка получения презентации: {error_data}")
+                return await response.json()
+
+    async def generate_presentation(self, request: dict) -> dict:
+        presentation_id = await self.create_presentation(request)
+
+        while True:
+            status_data = await self.check_status(presentation_id)
+            if status_data["status"] in ["completed", "error"]:
+                break
+            await asyncio.sleep(1)
+        if status_data["status"] == "completed":
+            presentation = await self.get_presentation(presentation_id)
+            return presentation
+        else:
+            raise Exception(f"Ошибка генерации: {status_data.get('error_message', 'Unknown error')}")
+
+
 @dp.message(StateFilter(PresentationForm.waiting_for_query_input))
 async def query_input_handler(message: types.Message, state: FSMContext):
     logger.info(f"Пользователь {message.from_user.id} ({message.from_user.username}) ввёл запрос: {message.text}")
@@ -117,7 +164,18 @@ async def query_input_handler(message: types.Message, state: FSMContext):
 
     await message.answer(f"Отправка запроса на сервер...\nСтиль: {style}\nЗапрос: {query}")
 
-    # TODO: добавить логику связи с сервером и обработки результата
+    request_payload = {
+        "topic": query,
+        "style": style,
+        "slides_count": 7
+    }
+    generator = PresentationGenerator()
+    try:
+        presentation = await generator.generate_presentation(request_payload)
+        presentation_url = f"{generator.api_url}{presentation.get('url', '')}"
+        await message.answer(f"Презентация сгенерирована и доступна по адресу:\n{presentation_url}")
+    except Exception as e:
+        await message.answer(f"Ошибка генерации презентации:\n{str(e)}")
 
     await state.clear()
     await message.answer("Готово. Вы вернулись в главное меню.", reply_markup=get_main_menu_keyboard())
